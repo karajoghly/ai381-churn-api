@@ -1,0 +1,16 @@
+[project]
+name = "ai381-churn-api"
+version = "0.2.0"
+description = "AI381 Lab 2: churn model as a tested, containerised FastAPI service"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

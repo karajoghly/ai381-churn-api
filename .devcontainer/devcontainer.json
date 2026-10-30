@@ -1,0 +1,9 @@
+{
+  "name": "ai381-churn-api",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false }
+  },
+  "forwardPorts": [8000],
+  "postCreateCommand": "pip install -r requirements-dev.txt"
+}
