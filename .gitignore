@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+# Model artifacts are built, never committed: CI and Docker retrain from data/.
+models/
+*.pkl
+*.joblib
