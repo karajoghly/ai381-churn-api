@@ -2,8 +2,8 @@
 # Change it in a pull request to propose a new model; the gate decides.
 model: logreg
 params:
-  C: 1.0
-  class_weight: balanced
+  C: 0.003
+
 gate:
   metric: f1
   min_delta: 0.0
