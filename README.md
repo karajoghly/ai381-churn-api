@@ -1,6 +1,9 @@
 # Churn Prediction API
 
 [![CI](https://github.com/karajoghly/ai381-churn-api/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/karajoghly/ai381-churn-api/actions/workflows/ci.yml)
+[![Train, gate, deploy](https://github.com/karajoghly/ai381-churn-api/actions/workflows/train-deploy.yml/badge.svg?branch=main)](https://github.com/karajoghly/ai381-churn-api/actions/workflows/train-deploy.yml)
+
+Deployment: every promoted champion is published to GHCR and smoke-tested by CI; run it locally with the command below (Azure Container Apps is optional in Lab 3, see the end of this file).
 
 AI381 Lab 2. A logistic-regression churn model served by FastAPI, tested with pytest,
 packaged in a multi-stage non-root Docker image, and built, scanned (Trivy) and pushed
@@ -54,23 +57,53 @@ docker build --build-arg GIT_SHA=$(git rev-parse HEAD) -t churn-api .
 docker run --rm -p 8000:8000 churn-api
 ```
 
-## Project layout
+## Lab 3: tracked, gated, shipped to Azure
 
 ```
-src/features.py        input contract shared by training and serving
-src/train/train.py     trains the sklearn pipeline, saves models/model.joblib
-src/app/main.py        FastAPI service (/health, /predict)
-tests/                 pytest suite (API contract, schema, edge cases, determinism, model)
-Dockerfile             multi-stage, non-root, digest-pinned base, HEALTHCHECK
-.github/workflows/     CI: lint+test on PRs; build, Trivy scan, push to GHCR on main
-scripts/pin_base_image.sh  refreshes the base image digest in the Dockerfile
+config/train.yaml --PR--> gate (dry run): retrain, compare with @champion -> red if worse
+                 --main--> gate --promote--> build + Trivy + push (tag = commit SHA)
+                                         --> Azure Container Apps (OIDC) --> smoke test
 ```
 
-## CI pipeline
+### Track experiments (MLflow in Docker Compose)
 
-- **Pull request to `main`**: ruff lint and format check, base-image pin check, train, pytest.
-- **Push to `main`** (after merge): build image → Trivy report (HIGH, CRITICAL) →
-  Trivy gate (fails on fixable CRITICAL) → push `ghcr.io/karajoghly/ai381-churn-api:<sha>` and `:latest`.
-  The image digest is printed in the run summary.
-- All third-party actions are pinned to full commit SHAs. `main` is protected:
-  changes land only through a pull request with a green `lint-test` check.
+```bash
+pip install -r requirements-train.txt
+docker compose up -d --wait            # MLflow UI on http://localhost:5000
+python -m src.train.candidates         # 3 candidates -> MLflow, winner -> churn-model@champion
+```
+
+Every run logs params, metrics (F1, F1 per slice, p95 latency, size), the data SHA-256,
+the dataset, the model signature and the model. MLflow stores everything in `./mlflow`,
+which is committed, so CI compares against the same `@champion`.
+Why the champion won: [`MODEL_SELECTION.md`](MODEL_SELECTION.md).
+
+### The promotion gate
+
+`python -m src.train.gate` retrains the model in `config/train.yaml` and promotes it only if
+**F1 >= champion F1 + min_delta** and **p95 latency <= 50 ms**; otherwise it exits 1 and the
+workflow fails, so nothing is built or deployed. Pull requests run it as a dry run.
+
+### Lineage
+
+| Where | What it shows |
+|---|---|
+| Image tag | `ghcr.io/karajoghly/ai381-churn-api:<commit SHA>` |
+| Image labels | `org.opencontainers.image.revision` = commit SHA, `ai381.mlflow.run_id` |
+| `GET /health` | `git_sha`, `mlflow_run_id`, `registry_version` |
+| MLflow registry | model version tags `run_id`, `git_sha`, `image_tag` |
+| Workflow summary | image -> commit -> run ID, plus the `mlflow-export` artifact |
+
+### Smoke test a running deployment
+
+```bash
+docker run -d --name churn -p 8000:8000 ghcr.io/karajoghly/ai381-churn-api:latest
+bash scripts/smoke_test.sh http://localhost:8000
+```
+
+### Azure (optional, one time)
+
+Run [`scripts/azure_setup.sh`](scripts/azure_setup.sh) in Azure Cloud Shell, then add the
+three secrets it prints (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`)
+and a repository variable `AZURE_DEPLOY=true`.
+GitHub logs in with OIDC: no Azure password is stored anywhere.

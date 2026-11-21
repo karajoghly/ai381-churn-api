@@ -1,0 +1,73 @@
+[
+  {
+    "kind": "logreg",
+    "params": {
+      "C": 1.0,
+      "class_weight": "balanced"
+    },
+    "metrics": {
+      "f1": 0.5948,
+      "precision": 0.5,
+      "recall": 0.734,
+      "accuracy": 0.6867,
+      "roc_auc": 0.794,
+      "p95_latency_ms": 5.112,
+      "model_size_kb": 3.5635,
+      "f1_slice/contract/month-to-month": 0.6354,
+      "f1_slice/contract/one-year": 0.4444,
+      "f1_slice/contract/two-year": 0.3077,
+      "f1_slice/internet_service/dsl": 0.697,
+      "f1_slice/internet_service/fiber": 0.597,
+      "f1_slice/internet_service/none": 0.375
+    },
+    "run_id": "9d2f5183c29c45d0af48a599ee40b861"
+  },
+  {
+    "kind": "random_forest",
+    "params": {
+      "n_estimators": 200,
+      "max_depth": 8,
+      "class_weight": "balanced"
+    },
+    "metrics": {
+      "f1": 0.5478,
+      "precision": 0.4632,
+      "recall": 0.6702,
+      "accuracy": 0.6533,
+      "roc_auc": 0.7281,
+      "p95_latency_ms": 30.4334,
+      "model_size_kb": 3523.7676,
+      "f1_slice/contract/month-to-month": 0.6054,
+      "f1_slice/contract/one-year": 0.3529,
+      "f1_slice/contract/two-year": 0.1818,
+      "f1_slice/internet_service/dsl": 0.6571,
+      "f1_slice/internet_service/fiber": 0.5758,
+      "f1_slice/internet_service/none": 0.1429
+    },
+    "run_id": "3fb78ef98b9b45a8aec2dc992532ca1a"
+  },
+  {
+    "kind": "hist_gb",
+    "params": {
+      "max_iter": 200,
+      "learning_rate": 0.05,
+      "max_depth": 4
+    },
+    "metrics": {
+      "f1": 0.5,
+      "precision": 0.5233,
+      "recall": 0.4787,
+      "accuracy": 0.7,
+      "roc_auc": 0.731,
+      "p95_latency_ms": 9.6685,
+      "model_size_kb": 276.6963,
+      "f1_slice/contract/month-to-month": 0.5517,
+      "f1_slice/contract/one-year": 0.4,
+      "f1_slice/contract/two-year": 0.0,
+      "f1_slice/internet_service/dsl": 0.64,
+      "f1_slice/internet_service/fiber": 0.5138,
+      "f1_slice/internet_service/none": 0.0952
+    },
+    "run_id": "16540aca517149c692dd3e9d1ad1ae04"
+  }
+]

@@ -1,4 +1,8 @@
-"""Train the churn model and save it as one versioned artifact.
+"""Train the configured model WITHOUT MLflow and save the serving bundle.
+
+Used by the lint-test CI job and the unit tests, which must not need a tracking server.
+The tracked paths are src/train/candidates.py (pick a champion) and src/train/gate.py
+(retrain, compare with the champion, promote).
 
 Usage:
     python -m src.train.train --data data/churn_v2.csv --out models/model.joblib
@@ -7,94 +11,83 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
-import pandas as pd
 import sklearn
-from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from src.features import (
-    CATEGORICAL_FEATURES,
-    FEATURES,
-    NUMERIC_FEATURES,
-    RANDOM_STATE,
-    TARGET,
-)
+from src.features import FEATURES
+from src.train.config import DEFAULT_CONFIG, load_config
+from src.train.data import DEFAULT_DATA, file_sha256, load_data, split
+from src.train.evaluate import evaluate
+from src.train.models import build_pipeline
 
-DEFAULT_DATA = Path("data/churn_v2.csv")
+__all__ = ["DEFAULT_DATA", "DEFAULT_OUT", "load_data", "save_bundle", "train"]
+
 DEFAULT_OUT = Path("models/model.joblib")
 
 
-def load_data(path: Path) -> pd.DataFrame:
-    """Read the CSV and fail loudly if the schema is not what the model expects."""
-    df = pd.read_csv(path)
-    missing = [c for c in [*FEATURES, TARGET] if c not in df.columns]
-    if missing:
-        raise ValueError(f"{path} is missing required columns {missing}. Found: {list(df.columns)}")
-    return df
-
-
-def build_pipeline() -> Pipeline:
-    """Preprocessing and model in one object, so serving can never skip a step."""
-    preprocess = ColumnTransformer(
-        [
-            ("num", StandardScaler(), NUMERIC_FEATURES),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL_FEATURES),
-        ]
-    )
-    model = LogisticRegression(max_iter=1000, random_state=RANDOM_STATE)
-    return Pipeline([("preprocess", preprocess), ("model", model)])
-
-
-def train(data_path: Path = DEFAULT_DATA, out_path: Path = DEFAULT_OUT) -> dict:
-    df = load_data(data_path)
-    X, y = df[FEATURES], df[TARGET]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=RANDOM_STATE
-    )
-
-    pipeline = build_pipeline().fit(X_train, y_train)
-
-    proba = pipeline.predict_proba(X_test)[:, 1]
-    metrics = {
-        "accuracy": round(float(accuracy_score(y_test, proba >= 0.5)), 4),
-        "roc_auc": round(float(roc_auc_score(y_test, proba)), 4),
-        "baseline_accuracy": round(float(max(y_test.mean(), 1 - y_test.mean())), 4),
-        "n_train": len(X_train),
-        "n_test": len(X_test),
-    }
-
+def save_bundle(
+    pipeline,
+    *,
+    out_path: Path,
+    kind: str,
+    params: dict,
+    metrics: dict,
+    data_sha256: str,
+    mlflow_run_id: str = "untracked",
+    registry_version: str = "none",
+) -> dict:
+    """The one file the image serves: model + everything needed to trace where it came from."""
     bundle = {
         "pipeline": pipeline,
         "features": FEATURES,
+        "model_kind": kind,
+        "params": params,
         "metrics": metrics,
-        "data_sha256": hashlib.sha256(Path(data_path).read_bytes()).hexdigest(),
+        "data_sha256": data_sha256,
+        "mlflow_run_id": mlflow_run_id,
+        "registry_version": registry_version,
         "sklearn_version": sklearn.__version__,
         "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
-
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, out_path)
-    print(json.dumps({"saved_to": str(out_path), **metrics}, indent=2))
+    return bundle
+
+
+def train(
+    data_path: Path = DEFAULT_DATA,
+    out_path: Path = DEFAULT_OUT,
+    config_path: Path = DEFAULT_CONFIG,
+) -> dict:
+    config = load_config(config_path)
+    kind, params = config["model"], config["params"]
+    X_train, X_test, y_train, y_test = split(load_data(data_path))
+    pipeline = build_pipeline(kind, params).fit(X_train, y_train)
+    metrics = evaluate(pipeline, X_test, y_test)
+    bundle = save_bundle(
+        pipeline,
+        out_path=out_path,
+        kind=kind,
+        params=params,
+        metrics=metrics,
+        data_sha256=file_sha256(data_path),
+    )
+    print(json.dumps({"saved_to": str(out_path), "model": kind, **metrics}, indent=2))
     return bundle
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train the churn model.")
+    parser = argparse.ArgumentParser(description="Train the churn model (no tracking).")
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     args = parser.parse_args()
-    train(args.data, args.out)
+    train(args.data, args.out, args.config)
 
 
 if __name__ == "__main__":

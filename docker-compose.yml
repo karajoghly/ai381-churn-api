@@ -1,0 +1,36 @@
+# MLflow tracking server + model registry.
+#   docker compose up -d --wait      start it (UI on http://localhost:5000)
+#   docker compose down              stop it (data stays in ./mlflow)
+#
+# Everything MLflow stores lives in ./mlflow, which is committed to git:
+# the CI training workflow starts this same server on the same data, so it can
+# compare every new model against the real @champion.
+services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow.Dockerfile
+    image: ai381-mlflow:3.17.2
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow:/mlflow
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=sqlite:////mlflow/mlflow.db
+      - --artifacts-destination=/mlflow/artifacts
+      # Local development only: accept the Codespaces port-forwarding host name.
+      - --allowed-hosts=*
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s

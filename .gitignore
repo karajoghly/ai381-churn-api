@@ -4,7 +4,10 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
-# Model artifacts are built, never committed: CI and Docker retrain from data/.
+# The serving bundle is produced by the gate in CI, never committed.
 models/
 *.pkl
 *.joblib
+# ...except MLflow's own store, which IS committed (runs, registry, model artifacts).
+!mlflow/**
+reports/gate.json
