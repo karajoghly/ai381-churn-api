@@ -1,0 +1,34 @@
+{
+  "dataframe_split": {
+    "columns": [
+      "tenure_months",
+      "monthly_fee",
+      "support_calls",
+      "contract",
+      "internet_service"
+    ],
+    "data": [
+      [
+        56,
+        22.88,
+        4,
+        "month-to-month",
+        "none"
+      ],
+      [
+        13,
+        41.56,
+        3,
+        "two-year",
+        "none"
+      ],
+      [
+        8,
+        50.26,
+        2,
+        "month-to-month",
+        "fiber"
+      ]
+    ]
+  }
+}

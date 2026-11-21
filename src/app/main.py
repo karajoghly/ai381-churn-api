@@ -87,10 +87,15 @@ def _require_model() -> dict:
 @app.get("/health")
 def health() -> dict:
     bundle = _require_model()
+    # Lineage: image tag == git commit SHA (model_version) -> MLflow run that trained the model.
     return {
         "status": "ok",
         "model_loaded": True,
         "model_version": APP_VERSION,
+        "git_sha": APP_VERSION,
+        "mlflow_run_id": bundle.get("mlflow_run_id", "untracked"),
+        "registry_version": bundle.get("registry_version", "none"),
+        "model_kind": bundle.get("model_kind", "logreg"),
         "trained_at": bundle["trained_at"],
         "data_sha256": bundle["data_sha256"][:12],
     }

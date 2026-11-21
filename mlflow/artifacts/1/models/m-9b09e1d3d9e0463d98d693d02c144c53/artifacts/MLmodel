@@ -1,0 +1,37 @@
+artifact_path: mlflow-artifacts:/1/models/m-9b09e1d3d9e0463d98d693d02c144c53/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.16
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.9.1
+    skops_trusted_types: null
+is_signature_from_type_hint: false
+mlflow_version: 3.17.2
+model_id: m-9b09e1d3d9e0463d98d693d02c144c53
+model_size_bytes: 3279
+model_uuid: m-9b09e1d3d9e0463d98d693d02c144c53
+prompts: null
+run_id: b11314b756de41aa950334087462f24f
+saved_input_example_info:
+  artifact_path: input_example.json
+  pandas_orient: split
+  serving_input_path: serving_input_example.json
+  type: dataframe
+signature:
+  inputs: '[{"type": "long", "name": "tenure_months", "required": true}, {"type":
+    "double", "name": "monthly_fee", "required": true}, {"type": "long", "name": "support_calls",
+    "required": true}, {"type": "string", "name": "contract", "required": true}, {"type":
+    "string", "name": "internet_service", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "int64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-11-21 14:47:05.273406'

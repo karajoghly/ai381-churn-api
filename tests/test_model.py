@@ -17,10 +17,11 @@ def test_model_loads(model_path):
     assert hasattr(bundle["pipeline"], "predict_proba")
 
 
-# 8. Quality floor: the model must beat "always predict the majority class".
+# 8. Quality floor: "always predict no churn" scores F1 = 0 (yet 69% accuracy, which is why
+#    accuracy is not the gate metric on this imbalanced data).
 def test_model_beats_majority_baseline(model_path):
     m = joblib.load(model_path)["metrics"]
-    assert m["accuracy"] > m["baseline_accuracy"]
+    assert m["f1"] > 0.4
     assert m["roc_auc"] > 0.6
 
 

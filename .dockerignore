@@ -6,7 +6,13 @@ venv
 **/__pycache__
 .pytest_cache
 .ruff_cache
-models
 tests
 scripts
+data
+mlflow
+reports
+config
 *.md
+# Only the gate-approved bundle goes into the image.
+models/*
+!models/model.joblib

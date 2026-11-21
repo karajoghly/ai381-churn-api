@@ -14,3 +14,7 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.ruff.lint.isort]
+# ./mlflow is MLflow's data folder, not our package: keep `import mlflow` third-party.
+known-third-party = ["mlflow"]

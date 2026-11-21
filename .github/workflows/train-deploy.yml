@@ -1,0 +1,235 @@
+name: Train, gate, deploy
+
+# Pull request: retrain the challenger in config/train.yaml and run the gate (dry run).
+#               A worse or slower model turns this check RED and cannot be merged.
+# main:         retrain, gate, promote to @champion, build + scan + push the image,
+#               run it and smoke-test it (lineage checked); optionally deploy to Azure
+#               (Azure Container Apps, optional: only when repo variable AZURE_DEPLOY=true).
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: train-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-ai381-lab3
+  CONTAINER_APP: churn-api
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.gate.outputs.run_id }}
+      registry_version: ${{ steps.gate.outputs.registry_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install training dependencies
+        run: pip install -r requirements-train.txt
+
+      - name: Start MLflow (Docker Compose, on the committed ./mlflow store)
+        run: docker compose up -d --wait
+
+      - name: Retrain challenger and run the promotion gate
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python -m src.train.gate --dry-run
+          else
+            python -m src.train.gate --promote
+          fi
+
+      - name: Export MLflow store (runs, metrics, registry, models)
+        if: always()
+        run: |
+          docker compose down
+          tar czf mlflow-export.tgz mlflow reports
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mlflow-export
+          path: mlflow-export.tgz
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name != 'pull_request'
+        with:
+          name: model-bundle
+          path: models/model.joblib
+          if-no-files-found: error
+
+  build-scan-push:
+    name: build-scan-push
+    needs: gate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set image name (GHCR needs lowercase)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Download the gate-approved model bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: model-bundle
+          path: models
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image (champion model baked in)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            MLFLOW_RUN_ID=${{ needs.gate.outputs.run_id }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan (report HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+
+      - name: Trivy gate (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image tagged with commit SHA (and latest)
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+          DIGEST=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_SHA")
+          {
+            echo "### Image pushed"
+            echo "- Tag: \`$IMAGE:$GITHUB_SHA\`"
+            echo "- Digest: \`$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  smoke-test:
+    name: smoke-test
+    needs: [gate, build-scan-push]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run the published image (pulled from GHCR, exactly as users get it)
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}"
+          docker run -d --name churn -p 8000:8000 "$IMAGE"
+          echo "### Smoke test of \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test + lineage check (image tag -> commit SHA -> MLflow run ID)
+        run: |
+          bash scripts/smoke_test.sh http://localhost:8000 \
+            "$GITHUB_SHA" "${{ needs.gate.outputs.run_id }}" | tee smoke.txt
+          { echo '```'; cat smoke.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: deploy
+    needs: [gate, build-scan-push]
+    # Turned on once Azure is set up: repo Settings -> Secrets and variables -> Actions ->
+    # Variables -> AZURE_DEPLOY = true (plus the three AZURE_* secrets).
+    if: vars.AZURE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC: GitHub proves who it is to Azure; no password is stored.
+    steps:
+      - name: Set image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/container-apps-deploy-action@8dff69dac3367c32ceb2690d8f13adbeab462703 # v2
+        with:
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          containerAppName: ${{ env.CONTAINER_APP }}
+          imageToDeploy: ${{ env.IMAGE }}
+          targetPort: "8000"
+          ingress: external
+
+      - name: Scale to zero when idle
+        run: |
+          az containerapp update -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" \
+            --min-replicas 0 --max-replicas 1 -o none
+          az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" \
+            --query "properties.template.scale" -o json
+
+      - name: Smoke test the public URL
+        env:
+          RUN_ID: ${{ needs.gate.outputs.run_id }}
+        run: |
+          FQDN=$(az containerapp show -n "$CONTAINER_APP" -g "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          URL="https://$FQDN"
+          echo "Public URL: $URL"
+
+          # Scaled to zero, so the first request wakes a replica: retry while it starts.
+          curl -fsS --retry 15 --retry-delay 10 --retry-all-errors --max-time 30 \
+            "$URL/health" | tee health.json
+          echo
+          python3 - <<'PY'
+          import json, os
+          h = json.load(open("health.json"))
+          assert h["status"] == "ok" and h["model_loaded"], h
+          assert h["git_sha"] == os.environ["GITHUB_SHA"], f"wrong image running: {h['git_sha']}"
+          assert h["mlflow_run_id"] == os.environ["RUN_ID"], f"wrong model: {h['mlflow_run_id']}"
+          print("Lineage OK:", h["git_sha"], "->", h["mlflow_run_id"])
+          PY
+
+          curl -fsS -X POST "$URL/predict" -H "Content-Type: application/json" \
+            -d '{"tenure_months": 12, "monthly_fee": 70.5, "contract": "month-to-month", "internet_service": "fiber", "support_calls": 3}' \
+            | tee predict.json
+          echo
+          {
+            echo "### Deployed to Azure Container Apps"
+            echo "- Public URL: $URL"
+            echo "- Lineage: image \`$IMAGE\` -> commit \`$GITHUB_SHA\` -> MLflow run \`$RUN_ID\`"
+            echo "- /health: \`$(cat health.json)\`"
+            echo "- /predict: \`$(cat predict.json)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

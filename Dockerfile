@@ -4,7 +4,7 @@
 # build byte-for-byte reproducible. Run scripts/pin_base_image.sh to set the digest.
 ARG BASE_IMAGE=python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 
-# ---------- Stage 1: builder (has pip, build tools, training data) ----------
+# ---------- Stage 1: builder (has pip and build tools) ----------
 FROM ${BASE_IMAGE} AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
@@ -19,15 +19,15 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Train inside the build, so the model in the image always matches this commit.
-COPY src/ src/
-COPY data/ data/
-RUN python -m src.train.train --data data/churn_v2.csv --out models/model.joblib
-
 # ---------- Stage 2: runtime (only what the service needs) ----------
 FROM ${BASE_IMAGE} AS runtime
 
+# Lineage, readable with `docker inspect`: image tag == commit SHA -> MLflow run ID.
 ARG GIT_SHA=dev
+ARG MLFLOW_RUN_ID=untracked
+LABEL org.opencontainers.image.revision=${GIT_SHA} \
+      org.opencontainers.image.source="https://github.com/karajoghly/ai381-churn-api" \
+      ai381.mlflow.run_id=${MLFLOW_RUN_ID}
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +40,9 @@ RUN groupadd --system --gid 10001 app \
 
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
-COPY --from=builder /build/models ./models
+# The model is NOT trained here. The image ships exactly the bundle the promotion
+# gate approved (models/model.joblib, written by `python -m src.train.gate --promote`).
+COPY models/model.joblib ./models/model.joblib
 COPY src/ ./src/
 
 # Files stay owned by root, so the app user can read them but not change them.
